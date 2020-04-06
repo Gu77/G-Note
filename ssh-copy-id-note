@@ -56,9 +56,14 @@ then
   fi
 fi
 
+# 定位到家目录下，并且，寻找公钥文件，
+# ls -t 按最后修改时间进行排序 Sort by time modified (most recently modified first) before sorting the operands by lexicographical order.
+# grep -v -- '-cert.pub$' 非-cert.pub为结尾的
+# head -n 1 排行第一个的 只显示第一行的文件
 most_recent_id="$(cd "$HOME" ; ls -t .ssh/id*.pub 2>/dev/null | grep -v -- '-cert.pub$' | head -n 1)"
 DEFAULT_PUB_ID_FILE="${most_recent_id:+$HOME/}$most_recent_id"
 
+# 定义一个usage 函数 打印错误信息
 usage () {
   printf 'Usage: %s [-h|-?|-f|-n] [-i [identity_file]] [-p port] [[-o <ssh -o options>] ...] [user@]hostname\n' "$0" >&2
   printf '\t-f: force mode -- copy keys without trying to check if they are already installed\n' >&2
@@ -68,45 +73,58 @@ usage () {
 }
 
 # escape any single quotes in an argument
+# 转义提示的函数
 quote() {
   printf "%s\n" "$1" | sed -e "s/'/'\\\\''/g"
 }
 
 use_id_file() {
+  # 预定义了ID_FILE 为函数第一个参数
   local L_ID_FILE="$1"
 
+  # 判断是否为空，为空输出错误
   if [ -z "$L_ID_FILE" ] ; then
     printf "%s: ERROR: no ID file found\n" "$0"
     exit 1
   fi
 
+  # 判断 传递的 $L_ID_FILE 是否为 .pub 结尾。 ">/dev/null"不保留输出
   if expr "$L_ID_FILE" : ".*\.pub$" >/dev/null ; then
     PUB_ID_FILE="$L_ID_FILE"
   else
     PUB_ID_FILE="$L_ID_FILE.pub"
   fi
 
+  # $FORCED 是否为真假 
   [ "$FORCED" ] || PRIV_ID_FILE=$(dirname "$PUB_ID_FILE")/$(basename "$PUB_ID_FILE" .pub)
 
   # check that the files are readable
+  # 检查公钥文件是否可读  PUB_ID_FILE是否为非空值，則使用$PRIV_ID_FILE
   for f in "$PUB_ID_FILE" ${PRIV_ID_FILE:+"$PRIV_ID_FILE"} ; do
+    # 错误信息
     ErrMSG=$( { : < "$f" ; } 2>&1 ) || {
+      # 定义内部错误字符串
       local L_PRIVMSG=""
       [ "$f" = "$PRIV_ID_FILE" ] && L_PRIVMSG="	(to install the contents of '$PUB_ID_FILE' anyway, look at the -f option)"
       printf "\n%s: ERROR: failed to open ID file '%s': %s\n" "$0" "$f" "$(printf "%s\n%s\n" "$ErrMSG" "$L_PRIVMSG" | sed -e 's/.*: *//')"
       exit 1
     }
   done
+  # 输出安装的公钥
   printf '%s: INFO: Source of key(s) to be installed: "%s"\n' "$0" "$PUB_ID_FILE" >&2
+  # 获取公钥文件内容
   GET_ID="cat \"$PUB_ID_FILE\""
 }
 
+# 获取环境变量 SSH_AUTH_SOCK, 查看是否加载了密钥， 没有则用ssh-add加载
 if [ -n "$SSH_AUTH_SOCK" ] && ssh-add -L >/dev/null 2>&1 ; then
   GET_ID="ssh-add -L"
 fi
 
+# 判断调用这个脚本的时候的参数个数是否大于0
 while test "$#" -gt 0
 do
+  # 判断环境变量是否 SEEN_OPT_I 是否为空 
   [ "${SEEN_OPT_I}" ] && expr "$1" : "[-]i" >/dev/null && {
         printf "\n%s: ERROR: -i option must not be specified more than once\n\n" "$0"
         usage
