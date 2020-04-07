@@ -63,7 +63,7 @@ fi
 most_recent_id="$(cd "$HOME" ; ls -t .ssh/id*.pub 2>/dev/null | grep -v -- '-cert.pub$' | head -n 1)"
 DEFAULT_PUB_ID_FILE="${most_recent_id:+$HOME/}$most_recent_id"
 
-# 定义一个usage 函数 打印错误信息
+# 定义一个usage 函数 显示使用指南 打印错误信息
 usage () {
   printf 'Usage: %s [-h|-?|-f|-n] [-i [identity_file]] [-p port] [[-o <ssh -o options>] ...] [user@]hostname\n' "$0" >&2
   printf '\t-f: force mode -- copy keys without trying to check if they are already installed\n' >&2
@@ -133,21 +133,27 @@ do
   # 初始化参数
   OPT= OPTARG=
   # implement something like getopt to avoid Solaris pain
-  # 判断参数
+  # 判断输入参数
+  # 是否为 -iXXX | -oXXX | -pXXX
   case "$1" in
     -i?*|-o?*|-p?*)
     # 如果参数是 -i -o -p
       OPT="$(printf -- "$1"|cut -c1-2)"
+      echo $OPT
       OPTARG="$(printf -- "$1"|cut -c3-)"
+      echo $OPTARG
       shift
       ;;
     -o|-p)
       OPT="$1"
+      echo "this is opt:", $OPT
       OPTARG="$2"
+      echo "this is optarg", $OPTARG
       shift 2
       ;;
     -i)
       OPT="$1"
+      # 判断参数个数是否小于 2 || 检查 第二个参数是否包含- || OPTARG = 第二个参数
       test "$#" -le 2 || expr "$2" : "[-]" >/dev/null || {
         OPTARG="$2"
         shift
@@ -155,6 +161,7 @@ do
       shift
       ;;
     -f|-n|-h|-\?)
+    # 这些参数 无需第二个参数
       OPT="$1"
       OPTARG=
       shift
@@ -169,6 +176,7 @@ do
       break
       ;;
     -*)
+      # 匹配不支持的参数 输出错误信息
       printf "\n%s: ERROR: invalid option (%s)\n\n" "$0" "$1"
       usage
       ;;
@@ -185,12 +193,15 @@ do
       use_id_file "${OPTARG:-$DEFAULT_PUB_ID_FILE}"
       ;;
     -o|-p)
+    # 设置ssh opt
       SSH_OPTS="${SSH_OPTS:+$SSH_OPTS }$OPT '$(quote "$OPTARG")'"
       ;;
     -f)
+      # 设置强制模式
       FORCED=1
       ;;
     -n)
+      # 设置演示模式
       DRY_RUN=1
       ;;
     -h|-\?)
@@ -209,17 +220,20 @@ if [ $# != 1 ] ; then
   usage
 fi
 
-# drop trailing colon
+# drop trailing colon\
+# 将地址之后的冒号：删除
 USER_HOST=$(printf "%s\n" "$1" | sed 's/:$//')
 # tack the hostname onto SSH_OPTS
+# 如果 ssh option 不是空值， 将其作为回值 并且用单引号引起来
 SSH_OPTS="${SSH_OPTS:+$SSH_OPTS }'$(quote "$USER_HOST")'"
 # and populate "$@" for later use (only way to get proper quoting of options)
 eval set -- "$SSH_OPTS"
-
+# 为空 && 文件可读写 ${file:=my.file.txt} ：若$file 沒設定或為空值，則使用my.file.txt 作傳回值，同時將$file 賦值為my.file.txt 。(非空值時不作处理)
 if [ -z "$(eval $GET_ID)" ] && [ -r "${PUB_ID_FILE:=$DEFAULT_PUB_ID_FILE}" ] ; then
   use_id_file "$PUB_ID_FILE"
 fi
 
+# 不存在密钥
 if [ -z "$(eval $GET_ID)" ] ; then
   printf '%s: ERROR: No identities found\n' "$0" >&2
   exit 1
@@ -230,21 +244,25 @@ fi
 populate_new_ids() {
   local L_SUCCESS="$1"
 
+  # 强制模式下 获取密钥
   if [ "$FORCED" ] ; then
     NEW_IDS=$(eval $GET_ID)
     return
   fi
 
-  # repopulate "$@" inside this function 
+  # repopulate "$@" inside this function
+  # set -- "$X"就是把X的值返回给$1, set -- $X就是把X作为一个表达式的值一一返回
   eval set -- "$SSH_OPTS"
 
   umask 0177
   local L_TMP_ID_FILE=$(mktemp ~/.ssh/ssh-copy-id_id.XXXXXXXXXX)
   if test $? -ne 0 || test "x$L_TMP_ID_FILE" = "x" ; then
+    # $? 上个命令是否正确执行
     printf '%s: ERROR: mktemp failed\n' "$0" >&2
     exit 1
   fi
   local L_CLEANUP="rm -f \"$L_TMP_ID_FILE\" \"${L_TMP_ID_FILE}.stderr\""
+  # trap 接收到EXIT TERM INT QUIT 的信号后，进行清除零食文件的操作
   trap "$L_CLEANUP" EXIT TERM INT QUIT
   printf '%s: INFO: attempting to log in with the new key(s), to filter out any that are already installed\n' "$0" >&2
   NEW_IDS=$(
@@ -252,6 +270,7 @@ populate_new_ids() {
       while read ID || [ "$ID" ] ; do
         printf '%s\n' "$ID" > "$L_TMP_ID_FILE"
 
+        # 核心代码， 进行sssh 操作
         # the next line assumes $PRIV_ID_FILE only set if using a single id file - this
         # assumption will break if we implement the possibility of multiple -i options.
         # The point being that if file based, ssh needs the private key, which it cannot
@@ -260,10 +279,13 @@ populate_new_ids() {
             -o ControlPath=none \
             -o LogLevel=INFO \
             -o PreferredAuthentications=publickey \
+            # $@	传递给脚本或函数的所有参数。被双引号(" ")包含时， 检查是否可以连接
             -o IdentitiesOnly=yes "$@" exit 2>"$L_TMP_ID_FILE.stderr" </dev/null
         if [ "$?" = "$L_SUCCESS" ] ; then
+          # 清空文件
           : > "$L_TMP_ID_FILE"
         else
+          # 检查错误 输出到临时文件
           grep 'Permission denied' "$L_TMP_ID_FILE.stderr" >/dev/null || {
             sed -e 's/^/ERROR: /' <"$L_TMP_ID_FILE.stderr" >"$L_TMP_ID_FILE"
             cat >/dev/null #consume the other keys, causing loop to end
@@ -280,6 +302,7 @@ populate_new_ids() {
     printf '\n%s: %s\n\n' "$0" "$NEW_IDS" >&2
     exit 1
   fi
+  # key已经存在
   if [ -z "$NEW_IDS" ] ; then
     printf '\n%s: WARNING: All keys were skipped because they already exist on the remote system.\n' "$0" >&2
     printf '\t\t(if you think this is a mistake, you may want to use -f option)\n\n' "$0" >&2
@@ -291,6 +314,7 @@ populate_new_ids() {
 REMOTE_VERSION=$(ssh -v -o PreferredAuthentications=',' -o ControlPath=none "$@" 2>&1 |
                  sed -ne 's/.*remote software version //p')
 
+# 检测协议
 case "$REMOTE_VERSION" in
   NetScreen*)
     populate_new_ids 1
@@ -316,13 +340,16 @@ case "$REMOTE_VERSION" in
     populate_new_ids 0
     # in ssh below - to defend against quirky remote shells: use 'exec sh -c' to get POSIX;
     #     'cd' to be at $HOME; add a newline if it's missing; and all on one line, because tcsh.
+    # 演示模式并不进行真正的拷贝
     [ "$DRY_RUN" ] || printf '%s\n' "$NEW_IDS" | \
+    # 精华部分 拷贝key过去
       ssh "$@" "exec sh -c 'cd ; umask 077 ; mkdir -p .ssh && { [ -z "'`tail -1c .ssh/authorized_keys 2>/dev/null`'" ] || echo >> .ssh/authorized_keys ; } && cat >> .ssh/authorized_keys || exit 1 ; if type restorecon >/dev/null 2>&1 ; then restorecon -F .ssh .ssh/authorized_keys ; fi'" \
       || exit 1
     ADDED=$(printf '%s\n' "$NEW_IDS" | wc -l)
     ;;
 esac
 
+# 成功的提示
 if [ "$DRY_RUN" ] ; then
   cat <<-EOF
 	=-=-=-=-=-=-=-=
