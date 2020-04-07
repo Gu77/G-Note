@@ -124,16 +124,19 @@ fi
 # 判断调用这个脚本的时候的参数个数是否大于0
 while test "$#" -gt 0
 do
-  # 判断环境变量是否 SEEN_OPT_I 是否为空 
+  # 判断环境变量是否 SEEN_OPT_I 是否为空, 检查第一个参数是否为 -i
   [ "${SEEN_OPT_I}" ] && expr "$1" : "[-]i" >/dev/null && {
         printf "\n%s: ERROR: -i option must not be specified more than once\n\n" "$0"
         usage
   }
 
+  # 初始化参数
   OPT= OPTARG=
   # implement something like getopt to avoid Solaris pain
+  # 判断参数
   case "$1" in
     -i?*|-o?*|-p?*)
+    # 如果参数是 -i -o -p
       OPT="$(printf -- "$1"|cut -c1-2)"
       OPTARG="$(printf -- "$1"|cut -c3-)"
       shift
